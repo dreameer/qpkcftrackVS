@@ -54,36 +54,90 @@ using namespace std;
 using namespace cv;
 
 
-enum MODE 
+bool isrectinmat(Rect2d rect,Mat frame){
+	if((rect.x>=0)&&
+	   (rect.y>=0)&&
+	   ((rect.x+rect.width)<=frame.cols)&&
+	   ((rect.y+rect.height)<=frame.rows)){
+		   return true;
+	   }
+	else{
+		   return false;
+	   }
+}
+std::string getimagetype(int number)
 {
-	GRAY = (1<<0),
-	CN   = (1<<1),
-	CUSTOM = (1<<2)
-};
+    // find type
+    int imgTypeInt = number%8;
+    std::string imgTypeString;
 
-typedef struct Params_{
-	double detect_thresh;
-	double sigma;
-	double lambda;
-	double interp_factor;
-	double output_sigma_factor;
-	bool resize;
-	int max_patch_size;
-	bool split_coeff;
-	bool wrap_kernel;
-	int desc_npca;
-	int desc_pca;
+    switch (imgTypeInt)
+    {
+        case 0:
+            imgTypeString = "8U";
+            break;
+        case 1:
+            imgTypeString = "8S";
+            break;
+        case 2:
+            imgTypeString = "16U";
+            break;
+        case 3:
+            imgTypeString = "16S";
+            break;
+        case 4:
+            imgTypeString = "32S";
+            break;
+        case 5:
+            imgTypeString = "32F";
+            break;
+        case 6:
+            imgTypeString = "64F";
+            break;
+        default:
+            break;
+    }
 
-	//feature compression
-	bool compress_feature;
-	int compressed_size;
-	double pca_learning_rate;
-};
+    // find channel
+    int channel = (number/8) + 1;
 
+    std::stringstream type;
+    type<<"CV_"<<imgTypeString<<"C"<<channel;
+
+    return type.str();
+}
 
 class qptracker{
 
 public:
+
+	enum MODE 
+	{
+		GRAY = (1<<0),
+		CN   = (1<<1),
+		CUSTOM = (1<<2)
+	};
+
+	typedef struct Params_{
+		double detect_thresh;
+		double sigma;
+		double lambda;
+		double interp_factor;
+		double output_sigma_factor;
+		bool resize;
+		int max_patch_size;
+		bool split_coeff;
+		bool wrap_kernel;
+		int desc_npca;
+		int desc_pca;
+
+		//feature compression
+		bool compress_feature;
+		int compressed_size;
+		double pca_learning_rate;
+	};
+
+
 	Params_ params;
 	float output_sigma;
 	Rect2d roi;
@@ -182,7 +236,7 @@ pca_learning_rate=0.15f;  //!<  compression learning rate
 */
 void qptracker::initParams()
 {
-	params.detect_thresh = 0.5f;
+	params.detect_thresh = 0.4f;
 	params.sigma = 0.2f;
 	params.lambda = 0.0001f;
 	params.interp_factor = 0.075f;
@@ -191,12 +245,12 @@ void qptracker::initParams()
 	params.max_patch_size = 80*80;
 	params.split_coeff = true;
 	params.wrap_kernel = false;
-	params.desc_npca = GRAY;
+	params.desc_npca = CN;
 	params.desc_pca = GRAY;
 
 	params.compress_feature = false; //not used
 	params.compressed_size = 1;
-	params.pca_learning_rate = 0.15f;
+	params.pca_learning_rate = 0.30f;
 }
 
 
@@ -620,12 +674,30 @@ bool qptracker::initImpl( const Mat& image, const Rect2d& boundingBox )
 		}
 	}
 
-
+	imshow("yy",y);
+	printf("output_sigma %f\n",output_sigma);
 	y*=(float)output_sigma;
+	imshow("yyy",y);
 	cv::exp(y,y);
+
+
+	y=y*255;
+	double max_temp,min_temp;
+	Point max_loc,min_loc;
+	minMaxLoc(y,&min_temp,&max_temp,&min_loc,&max_loc);
+	printf("y max:%f min:%f %d %d\n",max_temp,min_temp,max_loc.x,max_loc.y);
+	printf("%f\n",y.at<float>(95,126));
+	Mat showmat = Mat::zeros(y.size(),CV_8U);
+	y.convertTo(showmat,CV_8U);
+
+	imshow("y",showmat);
+	
 
 	// perform fourier transfor to the gaussian response
 	fft2(y,yf);
+
+	cout<<getimagetype(yf.type())<<endl;
+	waitKey(0);
 
 
 
@@ -897,7 +969,6 @@ bool qptracker::updateImpl( const Mat& image, Rect2d& boundingBox )
 }
 
 
-
 int main(){
 	cv::VideoCapture inputcamera(0);
 	//inputcamera.set(CAP_PROP_FRAME_WIDTH,1280);
@@ -909,7 +980,7 @@ int main(){
 
 
 	inputcamera >> frame;
-	center_rect = Rect(frame.cols * 0.40, frame.rows * 0.45,frame.cols * 0.2, frame.rows * 0.1);
+	center_rect = Rect(frame.cols * 0.40, frame.rows * 0.40,frame.cols * 0.2, frame.rows * 0.2);
 	init_rect = center_rect;
 	object_rect = init_rect;
 
@@ -922,40 +993,68 @@ int main(){
 	while(maincontrol){
 		int64 start = cv::getTickCount();
 		inputcamera >> frame;
-		cvtColor(frame,gray,CV_BGR2GRAY);
+		cout<<getimagetype(frame.type())<<endl;
+		//cvtColor(frame,gray,CV_BGR2GRAY);
 
 
 		switch(cmd){
 		case 'e':maincontrol = false;break;
 		case 'q':re_init = true;break;
 		case 'w':initstatus = false;break;
+		case 'n':init_rect.x = init_rect.x - 0.5*(init_rect.width*0.1);
+			init_rect.width = init_rect.width*1.1;
+			init_rect.y = init_rect.y - 0.5*(init_rect.height*0.1);
+			init_rect.height = init_rect.height*1.1;
+			if(!isrectinmat(init_rect,frame)){
+				init_rect.width = init_rect.width/1.1;
+				init_rect.x = init_rect.x + 0.5*(init_rect.width*0.1);
+				init_rect.height = init_rect.height/1.1;
+				init_rect.y = init_rect.y + 0.5*(init_rect.height*0.1);
+			}else{
+
+			}break;
+		case 'm':init_rect.x = init_rect.x + 0.5*(init_rect.width*0.1);
+			init_rect.width = init_rect.width*0.9;
+			init_rect.y = init_rect.y + 0.5*(init_rect.height*0.1);
+			init_rect.height = init_rect.height*0.9;
+			if(!isrectinmat(init_rect,frame)){
+				init_rect.width = init_rect.width/0.9;
+				init_rect.x = init_rect.x - 0.5*(init_rect.width*0.1);
+				init_rect.height = init_rect.height/0.9;
+				init_rect.y = init_rect.y - 0.5*(init_rect.height*0.1);
+			}else{
+			}break;
+
 		default:break;
 		}
 
 
 		if(re_init){
 			cout<<"re init"<<endl;
-			object_rect = init_rect;
+			object_rect.x = (int)init_rect.x;
+			object_rect.y = (int)init_rect.y;
+			object_rect.width = (int)init_rect.width;
+			object_rect.height = (int)init_rect.height;
 			tracker = new qptracker;
 			tracker->initParams();
-			initstatus = tracker->initImpl(gray,object_rect);
+			initstatus = tracker->initImpl(frame,object_rect);
 			re_init = false;
 		}
 
 		if(initstatus)
 		{
 			cout<<"initstatus true"<<endl;
-			if(tracker->updateImpl(gray,object_rect)){
+			if(tracker->updateImpl(frame,object_rect)){
 				cout<<"update impl true"<<endl;
 				init_rect = object_rect;
-				rectangle(frame,object_rect,Scalar(255,0,0),2,1);
+				rectangle(frame,object_rect,Scalar(0,0,255),2,1);
 			}else{
 				cout<<"updateimpl false"<<endl;
 				rectangle(frame,object_rect,Scalar(0,255,0),2,1);
 			}
 		}
 		else{
-			rectangle(frame,init_rect,Scalar(0,0,255),2,1);
+			rectangle(frame,init_rect,Scalar(255,0,0),2,1);
 		}
 
 		double fps = cv::getTickFrequency() / (cv::getTickCount()-start);
@@ -969,3 +1068,4 @@ int main(){
 	}
 	return 0;
 }
+
