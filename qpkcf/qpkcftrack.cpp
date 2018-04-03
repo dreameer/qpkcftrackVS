@@ -245,7 +245,7 @@ void qptracker::initParams()
 	params.max_patch_size = 80*80;
 	params.split_coeff = true;
 	params.wrap_kernel = false;
-	params.desc_npca = CN;
+	params.desc_npca = CN ;
 	params.desc_pca = GRAY;
 
 	params.compress_feature = false; //not used
@@ -347,40 +347,30 @@ void inline qptracker::updateProjectionMatrix(const Mat src, Mat & old_cov,Mat &
 												  CV_Assert(compressed_sz<=src.channels());
 
 												  split(src,layers_pca);
-												  printf("log8.2.1\n");
 												  for (int i=0;i<src.channels();i++){
 													  average[i]=mean(layers_pca[i]);
 													  layers_pca[i]-=average[i];
 												  }
-												  printf("log8.2.2\n");
 												  // calc covariance matrix
 												  merge(layers_pca,pca_data);
 												  pca_data=pca_data.reshape(1,src.rows*src.cols);
-												  printf("log8.2.3\n");
 												  bool oclSucceed =false;
 
 												  if (oclSucceed == false) {
 													  new_cov=1.0f/(float)(src.rows*src.cols-1)*(pca_data.t()*pca_data);
-													  printf("log8.2.3.1\n");
 													  if(old_cov.rows==0)old_cov=new_cov.clone();
-													  printf("log8.2.3.1.1\n");
 													  SVD::compute((1.0f - pca_rate) * old_cov + pca_rate * new_cov, w, u, vt);
-													  printf("log8.2.3.2\n");
 												  }
 												  new_cov=1.0/(float)(src.rows*src.cols-1)*(pca_data.t()*pca_data);
-												  printf("log8.2.3.3\n");
 												  if(old_cov.rows==0)old_cov=new_cov.clone();
-												  printf("log8.2.4\n");
 												  // calc PCA
 												  SVD::compute((1.0-pca_rate)*old_cov+pca_rate*new_cov, w, u, vt);
-												  printf("log8.2.5\n");
 												  // extract the projection matrix
 												  proj_matrix=u(Rect(0,0,compressed_sz,src.channels())).clone();
 												  Mat proj_vars=Mat::eye(compressed_sz,compressed_sz,proj_matrix.type());
 												  for(int i=0;i<compressed_sz;i++){
 													  proj_vars.at<float>(i,i)=w.at<float>(i);
 												  }
-												  printf("log8.2.6\n");
 												  // update the covariance matrix
 												  old_cov=(1.0-pca_rate)*old_cov+pca_rate*proj_matrix*proj_vars*proj_matrix.t();
 }
@@ -543,7 +533,36 @@ void qptracker::denseGaussKernel(const float sigma, const Mat x_data, const Mat 
 									 exp(xy,k_data);
 
 }
+/*
+* calculate the detection response
+*/
+void qptracker::calcResponse(const Mat alphaf_data, const Mat kf_data, Mat & response_data, Mat & spec_data) {
+	//alpha f--> 2channels ; k --> 1 channel;
+	mulSpectrums(alphaf_data,kf_data,spec_data,0,false);
+	ifft2(spec_data,response_data);
+}
 
+/*
+* calculate the detection response for splitted form
+*/
+void qptracker::calcResponse(const Mat alphaf_data, const Mat _alphaf_den, const Mat kf_data, Mat & response_data, Mat & spec_data, Mat & spec2_data) {
+
+	mulSpectrums(alphaf_data,kf_data,spec_data,0,false);
+
+	//z=(a+bi)/(c+di)=[(ac+bd)+i(bc-ad)]/(c^2+d^2)
+	float den;
+	for(int i=0;i<kf_data.rows;i++){
+		for(int j=0;j<kf_data.cols;j++){
+			den=1.0f/(_alphaf_den.at<Vec2f>(i,j)[0]*_alphaf_den.at<Vec2f>(i,j)[0]+_alphaf_den.at<Vec2f>(i,j)[1]*_alphaf_den.at<Vec2f>(i,j)[1]);
+			spec2_data.at<Vec2f>(i,j)[0]=
+				(spec_data.at<Vec2f>(i,j)[0]*_alphaf_den.at<Vec2f>(i,j)[0]+spec_data.at<Vec2f>(i,j)[1]*_alphaf_den.at<Vec2f>(i,j)[1])*den;
+			spec2_data.at<Vec2f>(i,j)[1]=
+				(spec_data.at<Vec2f>(i,j)[1]*_alphaf_den.at<Vec2f>(i,j)[0]-spec_data.at<Vec2f>(i,j)[0]*_alphaf_den.at<Vec2f>(i,j)[1])*den;
+		}
+	}
+
+	ifft2(spec2_data,response_data);
+}
 /* CIRCULAR SHIFT Function
 * http://stackoverflow.com/questions/10420454/shift-like-matlab-function-rows-or-columns-of-a-matrix-in-opencv
 */
@@ -595,36 +614,7 @@ void qptracker::shiftCols(Mat& mat, int n) {
 	}
 }
 
-/*
-* calculate the detection response
-*/
-void qptracker::calcResponse(const Mat alphaf_data, const Mat kf_data, Mat & response_data, Mat & spec_data) {
-	//alpha f--> 2channels ; k --> 1 channel;
-	mulSpectrums(alphaf_data,kf_data,spec_data,0,false);
-	ifft2(spec_data,response_data);
-}
 
-/*
-* calculate the detection response for splitted form
-*/
-void qptracker::calcResponse(const Mat alphaf_data, const Mat _alphaf_den, const Mat kf_data, Mat & response_data, Mat & spec_data, Mat & spec2_data) {
-
-	mulSpectrums(alphaf_data,kf_data,spec_data,0,false);
-
-	//z=(a+bi)/(c+di)=[(ac+bd)+i(bc-ad)]/(c^2+d^2)
-	float den;
-	for(int i=0;i<kf_data.rows;i++){
-		for(int j=0;j<kf_data.cols;j++){
-			den=1.0f/(_alphaf_den.at<Vec2f>(i,j)[0]*_alphaf_den.at<Vec2f>(i,j)[0]+_alphaf_den.at<Vec2f>(i,j)[1]*_alphaf_den.at<Vec2f>(i,j)[1]);
-			spec2_data.at<Vec2f>(i,j)[0]=
-				(spec_data.at<Vec2f>(i,j)[0]*_alphaf_den.at<Vec2f>(i,j)[0]+spec_data.at<Vec2f>(i,j)[1]*_alphaf_den.at<Vec2f>(i,j)[1])*den;
-			spec2_data.at<Vec2f>(i,j)[1]=
-				(spec_data.at<Vec2f>(i,j)[1]*_alphaf_den.at<Vec2f>(i,j)[0]-spec_data.at<Vec2f>(i,j)[0]*_alphaf_den.at<Vec2f>(i,j)[1])*den;
-		}
-	}
-
-	ifft2(spec2_data,response_data);
-}
 
 /*
 * Initialization:
@@ -674,30 +664,12 @@ bool qptracker::initImpl( const Mat& image, const Rect2d& boundingBox )
 		}
 	}
 
-	imshow("yy",y);
-	printf("output_sigma %f\n",output_sigma);
 	y*=(float)output_sigma;
-	imshow("yyy",y);
 	cv::exp(y,y);
 
 
-	y=y*255;
-	double max_temp,min_temp;
-	Point max_loc,min_loc;
-	minMaxLoc(y,&min_temp,&max_temp,&min_loc,&max_loc);
-	printf("y max:%f min:%f %d %d\n",max_temp,min_temp,max_loc.x,max_loc.y);
-	printf("%f\n",y.at<float>(95,126));
-	Mat showmat = Mat::zeros(y.size(),CV_8U);
-	y.convertTo(showmat,CV_8U);
-
-	imshow("y",showmat);
-	
-
 	// perform fourier transfor to the gaussian response
 	fft2(y,yf);
-
-	cout<<getimagetype(yf.type())<<endl;
-	waitKey(0);
 
 
 
@@ -752,7 +724,6 @@ bool qptracker::updateImpl( const Mat& image, Rect2d& boundingBox )
 	// resize the image whenever needed
 	if(resizeImage)resize(img,img,Size(img.cols/2,img.rows/2));
 
-	printf("log1\n");
 	// detection part
 	if(frame>0)
 	{
@@ -771,10 +742,7 @@ bool qptracker::updateImpl( const Mat& image, Rect2d& boundingBox )
 		if(features_npca.size()>0)merge(features_npca,X[1]);
 
 
-
-		printf("log2\n");
-
-
+		
 		// get compressed descriptors
 		for(unsigned i=0;i<descriptors_pca.size()-extractor_pca.size();i++){
 			if(!getSubWindow(img,roi, features_pca[i], img_Patch, descriptors_pca[i]))return false;
@@ -785,8 +753,6 @@ bool qptracker::updateImpl( const Mat& image, Rect2d& boundingBox )
 		}
 		if(features_pca.size()>0)merge(features_pca,X[0]);
 
-
-		printf("log3\n");
 
 
 		//compress the features and the KRSL model
@@ -807,10 +773,9 @@ bool qptracker::updateImpl( const Mat& image, Rect2d& boundingBox )
 		}else{
 			merge(X,2,x);
 			merge(Zc,2,z);
+			cout<<x.channels()<<z.channels()<<endl;
 		}
 
-
-		printf("log4\n");
 
 
 		//compute the gaussian kernel
@@ -838,7 +803,6 @@ bool qptracker::updateImpl( const Mat& image, Rect2d& boundingBox )
 
 	}
 
-	printf("log5\n");
 
 	// update the bounding box
 	boundingBox.x=(resizeImage?roi.x*2:roi.x)+(resizeImage?roi.width*2:roi.width)/4;
@@ -846,8 +810,6 @@ bool qptracker::updateImpl( const Mat& image, Rect2d& boundingBox )
 	boundingBox.width = (resizeImage?roi.width*2:roi.width)/2;
 	boundingBox.height = (resizeImage?roi.height*2:roi.height)/2;
 
-
-	printf("log6\n");
 
 
 	// extract the patch for learning purpose
@@ -873,8 +835,6 @@ bool qptracker::updateImpl( const Mat& image, Rect2d& boundingBox )
 
 
 
-	printf("log7\n");
-
 
 
 	//update the training data
@@ -887,24 +847,18 @@ bool qptracker::updateImpl( const Mat& image, Rect2d& boundingBox )
 	}
 
 
-	printf("log8\n");
-
 
 	if(params.desc_pca !=0 || use_custom_extractor_pca){
 		// initialize the vector of Mat variables
 		if(frame==0){
-			printf("log8.1\n");
 			layers_pca_data.resize(Z[0].channels());
 			average_data.resize(Z[0].channels());
 		}
-		printf("log8.2\n");
 		// feature compression
+
 		updateProjectionMatrix(Z[0],old_cov_mtx,proj_mtx,params.pca_learning_rate,params.compressed_size,layers_pca_data,average_data,data_pca, new_covar,w_data,u_data,vt_data);
-		printf("log8.3\n");
 		compress(proj_mtx,X[0],X[0],data_temp,compress_data);
 	}
-
-	printf("log8.5\n");
 
 	// merge all features
 	if(features_npca.size()==0)
@@ -923,8 +877,6 @@ bool qptracker::updateImpl( const Mat& image, Rect2d& boundingBox )
 		new_alphaf=Mat_<Vec2f >(yf.rows, yf.cols);
 	}
 
-
-	printf("log9\n");
 
 
 	// Kernel Regularized Least-Squares, calculate alphas
@@ -951,7 +903,6 @@ bool qptracker::updateImpl( const Mat& image, Rect2d& boundingBox )
 		}
 	}
 
-	printf("log10\n");
 
 
 	// update the RLS model
@@ -993,7 +944,7 @@ int main(){
 	while(maincontrol){
 		int64 start = cv::getTickCount();
 		inputcamera >> frame;
-		cout<<getimagetype(frame.type())<<endl;
+		//cout<<getimagetype(frame.type())<<endl;
 		//cvtColor(frame,gray,CV_BGR2GRAY);
 
 
@@ -1030,7 +981,6 @@ int main(){
 
 
 		if(re_init){
-			cout<<"re init"<<endl;
 			object_rect.x = (int)init_rect.x;
 			object_rect.y = (int)init_rect.y;
 			object_rect.width = (int)init_rect.width;
@@ -1043,13 +993,10 @@ int main(){
 
 		if(initstatus)
 		{
-			cout<<"initstatus true"<<endl;
 			if(tracker->updateImpl(frame,object_rect)){
-				cout<<"update impl true"<<endl;
 				init_rect = object_rect;
 				rectangle(frame,object_rect,Scalar(0,0,255),2,1);
 			}else{
-				cout<<"updateimpl false"<<endl;
 				rectangle(frame,object_rect,Scalar(0,255,0),2,1);
 			}
 		}
